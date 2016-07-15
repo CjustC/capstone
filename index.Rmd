@@ -1,0 +1,8 @@
+---
+title: "Capstone Project"
+author: "Chana VanNice"
+date: "July 14, 2016"
+output: html_document
+---
+
+This is an R Markdown document, a placeholder for the capstone project
