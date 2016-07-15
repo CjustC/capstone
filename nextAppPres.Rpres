@@ -1,0 +1,56 @@
+nextApp
+========================================================
+Predict the **next** word with [*nextApp*]((https://minionapp.shinyapps.io/nextApp/)! 
+ 
+ 
+ 
+*When you have eliminated the impossible, whatever remains, however improbable, must be the truth? --Sherlock Holmes*
+
+Chana VanNice  
+July 9, 2016
+
+Introduction
+========================================================
+
+Predicting the next word in a sentence is a very complex and intriguing area of human-centered computing. The purpose of this project is to produce a natural language model that will determine the *next word* from a sequence of previous words. The predictive algorithm will be demonstrated via a Shiny.io Application where the user enters a few words and upon submission will recieve the predicted next word for the phrase. 
+ 
+The **nextApp** is an application that will predict the **next** word as well as offer top five possible suggestions for the **next** word.
+
+Background
+========================================================
+
+For this project the task was to take [three sources of unstructured data](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip) to use as the foundation to predict the **next** word in a phrase. The sources are comprised of blogs, twitter, and news with a combined file size of 555+ MB. 
+ 
+The data was cleaned, processed, tokenized, and ngrams are created. The final report deviates from the [Milestone Report](http://rpubs.com/cjustc/189181), having more focus on the *quanteda* package which proved to be faster cleaning and processing of ngrams. 
+
+Code for this project can be found [here](https://github.com/CjustC/capstone).
+
+Approach
+========================================================
+
+- Process and clean unstructured data.
+- Tokenize data to create Document Frequency Matrix for each N-gram (1ngrams -thru- 4ngrams). 
+- Maximum Likelihood Estimattion (MLE) to calculate the next word based on previous word(s) entered. 
+ + freq(w1, w2) / freq(w2)
+- Prediction model based on the N-gram model, using previous n-1 words in a sequence to predict the next word 
+ + Simple [Markov Chain model](http://setosa.io/ev/markov-chains/) to determine the next word. 
+ + p (wi |w1, …,wi-1 )  =  p (wi |wi-n+1, …,wi-1 )
+- Simple back-off back model implemented for N-gram tables. 
+ 
+Approach
+========================================================
+
+Key Features of the <u>[nextApp](https://minionapp.shinyapps.io/nextApp/)</u> 
+
+- User enters a sequence of words 
+- Upon Submit, the predicted *next* word displays 
+- A table with the top five possible *next* words displays below the *predicted* word 
+- N-gram detection displayed below the table
+
+***
+
+
+![nextApp](nextApp.png) 
+</br>
+
+Click the [here](https://minionapp.shinyapps.io/nextApp/) to demo the application!

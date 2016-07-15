@@ -1,0 +1,351 @@
+---
+title: "Coursera Data Science Capstone - Milestone Report"
+author: "Chana VanNice"
+date: "June 9, 2016"
+output: html_document
+---
+# Synopsis 
+ 
+This is a milestone report for the Coursera Capstone project of predicting the next word in a sentence. The report summarizes exploratory analysis completed and the next steps outlined for moving forward to produce a next word prediction application. Multiple texts from multiple sources are combined to create a corpus. Natural Language Processing (NLP) methods will be used to build a prediction model and a data product will be created to select the next predicted word based on user inputs.  
+ 
+The data is comprised of text from three different sources (Blogs, Twitter, News) in four languages (English, German, Russian and Finnish). The data is downloaded directly from the [Coursera website](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip). This report will focus on the sources in english. 
+
+## Prepare Environment 
+```{r set_options, message = FALSE, warning=FALSE}
+rm(list=ls(all=TRUE)) # removes all *objects* from the workspace.
+setwd("~/DataScience/capstone")
+
+library(knitr)
+opts_chunk$set(echo = TRUE, results = 'hold')
+library(tm) # Text Mining ** Remove??? ** 
+
+library(quanteda) # faster cleaning/processing than RWeka or tm packages, can also creat n-grams in the same call.  
+#library(RWeka) # Create unigrams, bigrams and trigrams **Remove??**
+
+library(stringi) # Stats on the files
+library(SnowballC) # Stemming
+library(ggplot2) # Visualization
+library(wordcloud) # Word Cloud Generator
+library(RColorBrewer) # Color Palettes
+
+#############
+# Should I have library(NLP) loaded????
+# library(NLP) # for natural language processing
+
+# May be able to use the pryr package
+# library(pryr) # to see file size with command object_size
+#############
+
+# Download and unpack zip file
+DownURL <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+# If file doesn't exist download the source file
+if(!file.exists("Coursera-SwiftKey.zip")) {
+     # download file to local disk
+     download.file(url = DownURL, destfile = "Coursera-SwiftKey.zip", method = 'curl')
+     # unzip file
+     unzip("Coursera-SwiftKey.zip")
+     # unlink zip file (delete zip file)
+     unlink("Coursera-SwiftKey.zip") # tidy up
+}
+```
+It is best to do basic statistics on the data sources before opening the files. Some basic statistics can be revealed through the command line (terminal for mac). 
+<ul> 
+<li>File Size: ls -sh en_US/*<li>
+<li>Number of Lines: wc -l en_US/*<li>
+<li>Number of Words: wc -w en_US/*<li>
+<li>Stats with Number of Characters: wc en_US/*<li>
+</ul> 
+For this report, the file stats will be viewed using R. **File Size** will be reviewed prior to opening the data. 
+```{r fileSize}
+# File Size
+blogSize <- round(file.info("./final/en_US/en_US.blogs.txt")$size / 1024^2)
+twitterSize <- round(file.info("./final/en_US/en_US.twitter.txt")$size / 1024^2)
+newsSize <- round(file.info("./final/en_US/en_US.news.txt")$size / 1024^2)
+fileSize <- c(blogSize, twitterSize, newsSize)
+print(fileSize)
+```
+
+## Load Data 
+
+Read unstructured data using *readLines()* for each file. The function *readLines()* creates a *character vector* with as many elements as lines of text. 
+```{r readData}
+# Open Connection, readLines(), close connection for all 3 files
+# set warn = FALSE to supresses the warning message that there was no newline after the last line.
+
+# BLOGS: 
+blogCon <- file("./final/en_US/en_US.blogs.txt")
+blogs <- readLines(blogCon, encoding = "UTF-8", skipNul = TRUE, warn = FALSE)
+close(blogCon)
+
+# TWITTER: 
+twitterCon <- file("./final/en_US/en_US.twitter.txt", 'rb')
+twitter <- readLines(twitterCon, encoding = "UTF-8", skipNul = TRUE, warn = FALSE)
+close(twitterCon)
+# Twitter text needs to be explicitly utf-8 and NAs removed after converting.
+convTweets <- iconv(twitter, to = "utf-8")
+# The conversion leaves a vector with NAs. Remove the NAs.
+twitter <- (convTweets[!is.na(convTweets)])
+
+rm(convTweets) # tidy up
+
+# NEWS: (News needs to open in binary due to special characters in text)
+newsCon <- file("./final/en_US/en_US.news.txt", 'rb')
+news <- readLines(newsCon, encoding = "UTF-8", skipNul = TRUE, warn = FALSE)
+close(newsCon)
+
+# I suggest this to be done after sampling otherwise it will take a long time
+# Are any lines ascii
+# any(grepl("I_WAS_NOT_ASCII", iconv(ng2, "latin1", "ASCII", sub="I_WAS_NOT_ASCII")))
+
+# To check which lines are not ascii
+# grep("I_WAS_NOT_ASCII", iconv(ng2, "latin1", "ASCII", sub="I_WAS_NOT_ASCII"))
+```
+
+** Data Summary ** 
+```{r dataStats}
+# Word Count 
+blogWords <- sum(stri_count_words(blogs))
+twitterWords <- sum(stri_count_words(twitter))
+newsWords <- sum(stri_count_words(news))
+wordCount <- c(blogWords, twitterWords, newsWords)
+
+# Line Count
+blogLines <- length(blogs)
+twitterLines <- length(twitter)
+newsLines <- length(news)
+lineCount <- c(blogLines, twitterLines, newsLines)
+
+# Words per line 
+blogWPL <- blogWords / blogLines
+twitterWPL <- twitterWords / twitterLines
+newsWPL <- newsWords / newsLines
+# Words Per Line for all 3 files
+wplCount <- c(blogWPL, twitterWPL, newsWPL)
+
+# Display Basic Stats in a table
+dataNames <- c("Blogs", "Twitter", "News")
+fileStats <- data.frame(dataNames, fileSize, lineCount, wordCount, wplCount)
+colnames(fileStats) <- c("Data Names", "Size (MB)", "Line Count", "Word Count", "Words Per Line")
+kable(fileStats, format = "markdown", caption = "Basic Stats for all three files")
+```
+
+# Exploratory Analysis 
+
+The full datasets are large taking too much memory reducing processing speed. From this point we will continue with a sampling of the datasets. Sample 0.5% of each file and then merge the results. The sampling will speed up the processing of the data and avoid memory issues. 
+```{r sampleData}
+# Set Sample Size
+set.seed(50) # set seed for reproducibility
+sampleSize = 0.05 # 5% of the datasets will be sampled
+
+# Create a Sample file for each file
+blogSample <- sample(blogs, length(blogs) * sampleSize)
+twitterSample <- sample(twitter, length(twitter) * sampleSize)
+newsSample <- sample(news, length(news) * sampleSize)
+
+########## Best to keep datasets separate for analysis then combine ##########
+# The combined dataset will be used for training the models
+
+# Combine the 3 datasets into one large dataset
+dataSample <- c(blogSample, twitterSample, newsSample)
+dataSample[[1]]
+# Check lines in dataSample
+dataSampStat <- stri_stats_general(dataSample)
+dataSampStat
+
+# Write files to directory then remove datasets that will no longer be used 
+dir.create("sample", showWarnings = FALSE)
+write(blogSample, "sample/blogSample.txt")
+write(twitterSample, "sample/twitterSample.txt")
+write(newsSample, "sample/newsSample.txt")
+
+# Clean up
+remove(blogs)
+remove(twitter)
+remove(news)
+
+# STUDENT example may work substituting my variables. Also Student added this after the sampling and before   the cleaning not after. Placing example here and after creating and cleaning the corpus.
+#cleanMem()
+
+###### Example of writeLines()
+# con <- file(file.path(subSampPath,"SubSample.txt"), "wt")
+# writeLines(unlist(subSample), con)
+# close(con)
+
+```
+
+## Text Mining 
+Now that we have a smaller set of the data, we will create a **corpus**; a collection or sample of text. The **corpus** will be cleaned using various methods such as removing white space, removing punctuation, removing numbers, etc... 
+
+The load of the data in R has been done in the Corpus data structure, provided by the text mining framework library, tm. That loads the corpus in to the memory. Corpus uses lists.
+
+Use content transformer function and tm package functions to remove extraneous entities within the package that may introduce noise in our analysis. Inspect the document via inspect[docs('Num')] periodically to verify transformations are working.
+
+*Transformation is performed using tm_map() function to replace special characters.* 
+
+**Cleaning the Data** 
+```{r corpus_DTM}
+# Could put all of this into a function. See CapstoneFunctions.R
+
+
+# Create Corpus - a vector interpreting each component as document
+myCorpus <- VCorpus(VectorSource(dataSample))
+
+# Transformation is performed using tm_map() function to replace special characters 
+
+# Function to convert to empty spaces
+toEmpty <- content_transformer(function(x, pattern) gsub(pattern, "", x,fixed=TRUE))
+# Function: to convert to spaces
+toSpace <- content_transformer(function(x, pattern) gsub(pattern, " ", x))
+
+# Use the 'toEmpty' function to convert to empty spaces
+# Replace Hashtags (#justsaying) to empty spaces
+myCorpus <- tm_map(myCorpus, toEmpty, "#\\w+")                      
+# Clear Email addresses and shout outs (e.g. foo@demo.net) replace w/ empty spaces
+myCorpus <- tm_map(myCorpus, toEmpty, "(\\b\\S+\\@\\S+\\..{1,3}(\\s)?\\b)")
+# Replace shout outs (e.g. @yoyo) to empty spaces
+myCorpus <- tm_map(myCorpus, toEmpty, "@\\w+")                     
+
+# Use the 'toSpace' function to convert special characters to spaces
+# Remove slashes
+myCorpus <- tm_map(myCorpus, toSpace, "/|@|\\|") 
+# Remove URLs - replace w/ spaces
+myCorpus <- tm_map(myCorpus, toSpace, "(f|ht)tp(s?)://(.*)[.][a-z]+") 
+# Replace "@XXXXXX" with spaces (tweets)
+myCorpus <- tm_map(myCorpus, toSpace, "@[^\\s]+") 
+# Remove "RT"s & "vias" (tweets) - replace w/ spaces
+myCorpus <- tm_map(myCorpus, toSpace, "RT |via ")
+# Convert to lowercase
+myCorpus <- tm_map(myCorpus, content_transformer(tolower))
+# Remove all numbers
+myCorpus <- tm_map(myCorpus, removeNumbers)
+# Remove Punctuation
+myCorpus <- tm_map(myCorpus, removePunctuation)
+# Remove stopwords - will not be removed as they are needed to predict 'next' word
+#myCorpus<- tm_map(myCorpus, removeWords, stopwords("english")) # may need to remove this so the real NEXT word can be predicted.
+
+#############
+#Note: Stopwords were removed ONLY for exploratory data analysis purposes. For the model-building phase, they will be used, since it is important to recognise that stopwords are an essential part of any language and constitute a significant percentage of all the words used for communication.
+#############
+# remove profanities  -- WAIT - may remove profanities in the final project
+#     corpus<- tm_map(corpus, removeWords, profanities)
+
+# remove common word endings (ing, es, s)
+myCorpus <- tm_map(myCorpus, stemDocument)
+# remove unnecessary spaces & spaces created by 'toSpace' function 
+myCorpus <- tm_map(myCorpus, stripWhitespace) 
+
+# Convert all to plain text document - Must do once preprocessing is completed
+myCorpus <- tm_map(myCorpus, PlainTextDocument)
+# look at the corpus again
+myCorpus[[1]]$content
+
+# Save file
+save.image(file = "myCorpus.RData") # issues w/ writeLines() will - change before final project
+
+# STUDENT example may work substituting my variables. Also Student added this after the sampling and befor the cleaning
+# con <- file(file.path(subSampPath,"SubSample.txt"), "wt")
+# writeLines(unlist(subSample), con)
+# close(con)
+
+
+#dir.create("corpus", showWarnings = FALSE)
+#writeLines(myCorpus, "corpusClean.txt")
+# Convert corpus (character vector) to character to save as data.frame
+#corpusDF <- data.frame(text=unlist(sapply(myCorpus, `[`)), stringsAsFactors=F)
+
+# count words
+sum(sapply(strsplit(myCorpus[[1]]$content, split = "[^A-Za-z0-9]"), length))
+```
+
+
+Next, tokenize the corpus to determine the frequency of words and word phrases. Create **Term Document Matrices** to describe the frequency of terms appearing in the documents. Plot the *n-gram* frequencies.
+```{r tokenize_split}
+source("ngram_tokenizer.R")
+
+# Create N-Grams
+unigram <- content_transformer(ngram_tokenizer(1))
+bigram <- content_transformer(ngram_tokenizer(2))
+trigram <- content_transformer(ngram_tokenizer(3))
+
+# UniGram - Term Document Matrix - find frequency of words
+uniTDM <- TermDocumentMatrix(myCorpus, control = list(tokenize =(unigram)))
+#uniDTM <- DocumentTermMatrix(myCorpus, control = list(tokenize =(unigram)))
+##########
+#   could look at 'terms w/ freq of 300 and more with
+# findFreqTerms(twitter_dtm,300)
+#   Then you can look at the top 20 with...
+#   Here is a table with top 20 words
+# twitter_dtm.m <- as.matrix(twitter_dtm)
+# sorted <- sort(colSums(twitter_dtm.m),decreasing = TRUE)
+# kable(data.frame(Frequency = head(sorted,20)),align = "l")
+##########
+
+# remove sparse words
+tdm_1Sparsed <-removeSparseTerms(uniTDM, 0.99) 
+# Convert the convert tdm to data frame
+freq <- sort(rowSums(as.matrix(tdm_1Sparsed)), decreasing = TRUE)
+# convert to data frame and assign names
+freqTable <- data.frame(word = names(freq), freq = freq) 
+
+# Plot Frequent Words
+p <- ggplot(subset(freqTable, freq > 5000), aes(word, freq))
+p <- p + geom_bar(stat="identity",fill="lightblue")+theme(axis.text.x=element_text(angle=45, hjust=1))+labs(x = "2-Gram", y = "Freq", title = "Frequency of UniGrams")
+print(p)
+
+## BiGram - Term Document Matrix - find frequency of 2 word phrases
+biTDM <- TermDocumentMatrix(myCorpus, control = list(tokenize =(bigram)))
+tdm_2Sparsed <-removeSparseTerms(biTDM, 0.999) # remove sparse words
+# Convert the sparse term-document matrix to a standard data frame
+freq<- sort(rowSums(as.matrix(tdm_2Sparsed)), decreasing = TRUE)
+# convert to data frame and assign names
+freqTable2 <- data.frame(word = names(freq), freq = freq) 
+
+## TriGram - Term Document Matrix - find frequency of 3 word phrases
+triTDM <- TermDocumentMatrix(myCorpus, control = list(tokenize =(trigram)))
+tdm_3Sparsed <-removeSparseTerms(triTDM, 0.9999) # remove sparse words
+# Convert the sparse term-document matrix to a standard data frame
+freq <- sort(rowSums(as.matrix(tdm_3Sparsed)), decreasing = TRUE)
+# convert to data frame and assign names
+freqTable3 <- data.frame(word = names(freq), freq = freq) 
+```
+
+Create word clouds for each of the *n-grams*
+```{r plot, warning=FALSE}
+# Visulization
+set.seed(50)  # Ensure reproducibility
+#par(mfrow = c(1, 3))  # Establish Plotting Panel
+# unigram wordcloud
+wordcloud(freqTable$word, freq = freqTable$freq, min.freq = 1, max.words = 100, random.order = FALSE, rot.per = 0.35, colors = brewer.pal(8, "Dark2"))
+
+```
+
+## Next Steps 
+At this time the exploratory analysis has been done. I was not able to use the RWeaka package due to the latest Java update and rJava incompatibility. I plan to address the rJava issue and updateand use Amazon Web Services to implement the final project. The next steps are as follows: 
+ 
+<ul> 
+<li>Refine code and address Java issues</li>
+<li>Further cleaning and research removal of profanity impacting predictions</li> 
+<li>Build n-gram models and increase to 4-grams</li> 
+<li>Build predictive model and account for words or combinations missed in n-grams.</li> 
+<li>Build next word prediction Shiny App</li> 
+</ul>  
+
+
+....Steps further defined
+Algorithm:
+Build basic n-gram model
+Deep dive into backoff models to estimate the probability of unobserved n-grams
+Evaluate the model for Size and Speed
+
+The application:
+Build Shiny App
+Simple text entry
+Make it reactive
+Display top 3 predicted words
+
+Slide Deck:
+Slidify presentation
+Describe the problem
+Describe the dataset
+Describe the algorithm
+Describe the solution
